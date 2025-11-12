@@ -13,3 +13,8 @@ untuk audio kita pakai library:
 
 -WebRTC VAD
 -pyaudio
+
+'file kita kirim dengan format JSON.
+
+Broker: MQTT /MOSQUITTO
+Dashboard ui: blynk
