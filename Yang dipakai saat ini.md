@@ -6,3 +6,10 @@ ultralytics 8.1.0
 opencv-python 4.10.0.84
 mediapipe 0.10.14
 numpy 1.26.4
+
+
+
+untuk audio kita pakai library:
+
+-WebRTC VAD
+-pyaudio
