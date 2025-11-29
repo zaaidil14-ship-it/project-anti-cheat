@@ -1,6 +1,7 @@
 import cv2 as cv
 import mediapipe as mp
 import time
+from ultralytics import YOLO
 
 mp_face_detection = mp.solutions.face_detection
 mp_face_mesh = mp.solutions.face_mesh
@@ -37,12 +38,43 @@ def estimasi_pandangan(face_landmarks, image_w, image_h):
     else:
         return "Menghadap Depan", diff_x
 
+yolo_model = YOLO("yolov8m.pt")  # model YOLO
+target_classes = ["book", "person"]
+
+def detect_objects(frame):
+    results = yolo_model(frame)[0]
+    detected_objects = []
+
+    for box in results.boxes:
+        cls_id = int(box.cls[0])
+        cls_name = yolo_model.names[cls_id]
+        conf = float(box.conf[0])
+    
+        if cls_name == "book" and conf < 0.1: 
+            continue
+        elif cls_name == "person" and conf < 0.9: 
+            continue
+      
+        if cls_name in target_classes:
+            x1, y1, x2, y2 = map(int, box.xyxy[0])
+            conf = float(box.conf[0])
+            detected_objects.append({
+                "class": cls_name,
+                "bbox": [x1, y1, x2, y2],
+                "confidence": conf,
+                })
+            cv.rectangle(frame, (x1, y1), (x2, y2), (0,0,255), 2)
+            cv.putText(frame, f"{cls_name} {conf:.2f}", (x1, y1-10),
+                       cv.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,255), 2)
+
+    return detected_objects, frame
 
 cap = cv.VideoCapture(0)
 
 face_miss_start = None
 gaze_away_since = None
-frame_count = 0
+book_detected_since = None
+person_extra_since = None
 
 while True:
     success, frame = cap.read()
@@ -66,7 +98,7 @@ while True:
         if face_miss_start is None:
             face_miss_start = time.monotonic()
         elif time.monotonic() - face_miss_start > 2.0:
-            alerts.append("Face Missing >2s")
+            alerts.append("⚠️ Wajah Hilang >2s")
             gaze_away_since = None
     else:
         face_miss_start = None
@@ -82,7 +114,7 @@ while True:
             if gaze_away_since is None:
                 gaze_away_since = time.monotonic()
             elif time.monotonic() - gaze_away_since > 3.0:
-                alerts.append("Looking Away >3s")
+                alerts.append("⚠️ Menoleh >3s")
         else:
             gaze_away_since = None
 
@@ -99,27 +131,53 @@ while True:
 
         
         if shoulder_y < 0.5 and hip_y >= 0.5:
-            pose_status = "Standing"
+            pose_status = "Berdiri"
         elif shoulder_y >= 0.5:
-            pose_status = "Sitting"
+            pose_status = "Duduk"
         else:
             pose_status = "Unknown"
     elif not face_present:
-        pose_status = "Away"
+        pose_status = "Hilang"
 
 
 
     #Multi-face alert
     if num_faces > 1:
-        alerts.append("Multiple Faces Detected")
+        alerts.append("⚠️ Terdeteksi >1 Wajah")
 
+    objects, frame = detect_objects(frame)
+    
+    book_detected = any(obj["class"] == "book" for obj in objects)
+    if book_detected:
+        if book_detected_since is None:
+            book_detected_since = time.monotonic()
+        elif time.monotonic() - book_detected_since > 3.0:
+            alerts.append("⚠️ Buku Terdeteksi >3s")
+    else:
+        book_detected_since = None
+
+    extra_person = any(obj["class"] == "person" for obj in objects)
+    if extra_person and num_faces > 1:
+        if person_extra_since is None:
+            person_extra_since = time.monotonic()
+        elif time.monotonic() - person_extra_since > 3.0:
+            alerts.append("⚠️ Ada Orang Lain >5s")
+    else:
+        person_extra_since = None
+    
     # Tampilkan hasil
     cv.putText(frame, f"Faces: {num_faces}", (10, 30), cv.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2)
     cv.putText(frame, f"Gaze: {gaze_status}", (10, 60), cv.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2)
     cv.putText(frame, f"Pose: {pose_status}", (10, 90), cv.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2)
 
     if alerts:
-        cv.putText(frame, " | ".join(alerts), (10, 130), cv.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,255), 2)
+         y_offset = 30
+         for alert in alerts:
+            text_size = cv.getTextSize(alert, cv.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+            x = w - text_size[0] - 20
+            cv.rectangle(frame, (x-10, y_offset-25), (w-10, y_offset+5), (0, 0, 255), -1)  # Background merah
+            cv.putText(frame, alert, (x, y_offset), cv.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2)
+            y_offset += 35
 
     cv.imshow("AntiCheat", frame)
     if cv.waitKey(1) & 0xFF == ord('q'):
