@@ -39,7 +39,7 @@ def estimasi_pandangan(face_landmarks, image_w, image_h):
         return "Menghadap Depan", diff_x
 
 yolo_model = YOLO("yolov8m.pt")  # model YOLO
-target_classes = ["book", "person", "cell phone"]
+target_classes = ["book", "person", "cell phone", "paper"]
 
 def detect_objects(frame):
     results = yolo_model(frame)[0]
@@ -55,6 +55,8 @@ def detect_objects(frame):
         elif cls_name == "person" and conf < 0.9: 
             continue
         elif cls_name == "cell phone" and conf < 0.1:
+            continue
+        elif cls_name == "paper" and conf < 0.1:
             continue
       
         if cls_name in target_classes:
@@ -78,6 +80,7 @@ gaze_away_since = None
 book_detected_since = None
 person_extra_since = None
 phone_detected_since = None
+paper_detected_since = None
 
 while True:
     success, frame = cap.read()
@@ -176,6 +179,15 @@ while True:
             alerts.append("⚠️ HP Terdeteksi >3s")
     else:
         phone_detected_since = None
+
+    paper_detected = any(obj["class"] == "paper" for obj in objects)
+    if paper_detected:
+        if paper_detected_since is None:
+            paper_detected_since = time.monotonic()
+        elif time.monotonic() - paper_detected_since > 3.0:
+            alerts.append("⚠️ Kertas Terdeteksi >3s")
+    else:
+        paper_detected_since = None
     
     # Tampilkan hasil
     cv.putText(frame, f"Faces: {num_faces}", (10, 30), cv.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2)
