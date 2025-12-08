@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Anti-Cheat Viewer — Live</title>
+
+  <style>
+    :root{
+      --bg:#0f1724; --muted:#9aa4b2; --accent:#60a5fa; --danger:#fb7185;
+      --card:#071426; --panel:#021426;
+    }
+    body{margin:0;background:var(--bg);color:#e6eef8;font-family:Inter,system-ui,Roboto,Arial;padding:18px}
+    h1{font-size:18px;margin:0 0 12px 0}
+    .layout{display:grid;grid-template-columns:520px 1fr;gap:16px}
+    .card{background:var(--card);padding:12px;border-radius:10px}
+    .camera-wrap{position:relative;border-radius:8px;overflow:hidden;background:var(--panel)}
+    img#live{width:100%;height:auto;display:block}
+    canvas#overlay{position:absolute;left:0;top:0;pointer-events:none;z-index:5}
+    .controls{display:flex;gap:8px;margin-bottom:8px;align-items:center;flex-wrap:wrap}
+    .controls button{padding:8px 10px;border-radius:6px;border:none;background:var(--accent);color:#012;cursor:pointer}
+    .controls button.secondary{background:#1e293b;color:#e6eef8}
+    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px}
+    .thumb{width:100%;height:140px;object-fit:cover;border-radius:6px;background:#031026}
+    .transcript{background:var(--panel);padding:8px;border-radius:8px;color:#e6eef8;white-space:pre-wrap;margin-top:8px;font-size:13px}
+    .transcript span.forb{color:var(--danger);font-weight:700}
+    .log-item{padding:10px;border-radius:10px;background:#061226;border:1px solid #1b2940}
+    .type-badge{display:inline-block;padding:2px 6px;border-radius:999px;font-size:11px;margin-top:4px}
+    .badge{background:#0b2a3f;padding:6px 8px;border-radius:6px;color:#9aa4b2;font-size:12px}
+  </style>
+</head>
+
+<body>
+  <div class="topbar" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+    <h1>Anti-Cheat Viewer — Live</h1>
+    <div class="badge" id="status-badge">Status: connecting...</div>
+  </div>
+
+  <div class="controls">
+    <button id="reload">Reload Log</button>
+    <button id="snap">Snapshot</button>
+    <button id="download">Download Log</button>
+
+    <!-- ✅ ONLY ONE TOGGLE -->
+    <button id="toggleSystem" class="secondary">SYSTEM ON/OFF</button>
+
+    <!-- ✅ NEW: VIEW EVIDENCE -->
+    <button id="showFiles" class="secondary">Lihat File Evidence</button>
+    <button id="showSpeechLog" class="secondary">Rekam Jejak Ucapan</button>
+  </div>
+
+  <div class="layout">
+    <!-- LEFT PANEL -->
+    <div class="card">
+      <h3>Live Camera</h3>
+
+      <div class="camera-wrap">
+        <img id="live" src="/video">
+        <canvas id="overlay"></canvas>
+      </div>
+
+      <div style="margin-top:8px">
+        <div style="display:flex;gap:8px;">
+          <div style="color:#9aa4b2">Gaze:</div>
+          <div id="gaze">-</div>
+        </div>
+
+        <div style="display:flex;gap:8px;margin-top:6px;">
+          <div style="color:#9aa4b2">Alerts:</div>
+          <div id="alerts" style="color:#fb7185">-</div>
+        </div>
+
+        <div class="transcript" id="liveTranscript">Transcript (client): -</div>
+      </div>
+    </div>
+
+    <!-- RIGHT PANEL -->
+    <div class="card">
+      <h3>Log Evidence</h3>
+      <div id="grid" class="grid"></div>
+    </div>
+  </div>
+
+<script>
+const API_LOG = '/api/log';
+const API_SNAPSHOT = '/api/snapshot';
+const API_METADATA = '/api/live-metadata';
+const API_SPEECH = '/api/speech';
+const API_TOGGLE = '/api/toggle';
+const API_LIST = '/api/list-evidence';
+
+const liveImg = document.getElementById('live');
+const overlay = document.getElementById('overlay');
+const ctx = overlay.getContext('2d');
+const grid = document.getElementById('grid');
+const gazeEl = document.getElementById('gaze');
+const alertsEl = document.getElementById('alerts');
+const statusBadge = document.getElementById('status-badge');
+const liveTranscriptEl = document.getElementById('liveTranscript');
+
+
+
+let entries = [];
+let recognition = null;
+let listening = false;
+
+function resizeOverlay(){
+  overlay.width = liveImg.clientWidth;
+  overlay.height = liveImg.clientHeight;
+}
+liveImg.onload = resizeOverlay;
+window.onresize = resizeOverlay;
+
+function drawOverlay(faceBoxes, yoloBoxes){
+  ctx.clearRect(0,0,overlay.width,overlay.height);
+
+  const imgW = liveImg.naturalWidth || 640;
+  const imgH = liveImg.naturalHeight || 480;
+  const sx = overlay.width / imgW;
+  const sy = overlay.height / imgH;
+
+  // FACE (blue)
+  ctx.strokeStyle = '#60a5fa';
+  ctx.lineWidth = 2;
+  ctx.fillStyle = 'rgba(96,165,250,0.12)';
+
+  faceBoxes.forEach(b=>{
+    const x = b.xmin * imgW * sx;
+    const y = b.ymin * imgH * sy;
+    const w = b.width * imgW * sx;
+    const h = b.height * imgH * sy;
+    ctx.fillRect(x,y,w,h);
+    ctx.strokeRect(x,y,w,h);
+  });
+
+  // YOLO (red)
+  ctx.strokeStyle = '#fb7185';
+  ctx.fillStyle = '#fb7185';
+  ctx.font = "14px Arial";
+
+  yoloBoxes.forEach(o=>{
+    const [x1,y1,x2,y2] = o.box;
+    const x = x1 * sx;
+    const y = y1 * sy;
+    const w = (x2-x1) * sx;
+    const h = (y2-y1) * sy;
+    ctx.strokeRect(x,y,w,h);
+    ctx.fillText(`${o.class} ${(o.conf*100).toFixed(1)}%`, x+4, y-4);
+  });
+}
+
+async function loadLog(){
+  const r = await fetch(API_LOG);
+  entries = await r.json();
+  renderGrid();
+}
+
+function renderGrid(){
+  grid.innerHTML = '';
+
+  entries.forEach(e=>{
+    const wrap = document.createElement('div');
+    wrap.className = 'log-item';
+
+    wrap.style.border = e.type === 'forbidden'
+      ? '1px solid #fb7185'
+      : '1px solid #60a5fa';
+
+    wrap.innerHTML = `
+      <div style="font-weight:700;font-size:13px">${e.event} — ${e.timestamp}</div>
+      <div class="type-badge" style="background:${e.type==='forbidden'?'rgba(251,113,133,0.12)':'rgba(96,165,250,0.12)'};color:${e.type==='forbidden'?'#fb7185':'#60a5fa'}">
+        ${e.type.toUpperCase()}
+      </div>
+    `;
+
+    if(e.image_file){
+      const img = document.createElement('img');
+      img.className = 'thumb';
+      img.src = '/' + e.image_file;
+      wrap.appendChild(img);
+    }
+
+    grid.appendChild(wrap);
+  });
+}
+
+
+document.getElementById("showSpeechLog").onclick = async ()=>{
+  const r = await fetch("/api/log");
+  const logs = await r.json();
+
+  const speechLogs = logs.filter(e => e.type === "forbidden" && e.transcript);
+
+  let html = "<h3>Rekam Jejak Ucapan (Forbidden Only)</h3>";
+
+  speechLogs.forEach(e=>{
+    const forbidden = e.forbidden_words?.length
+      ? `<span style='color:#fb7185;font-weight:700'>[Forbidden: ${e.forbidden_words.join(", ")}]</span>`
+      : "";
+
+    html += `
+      <div style="padding:8px;border-bottom:1px solid #1b2940">
+        <div style="color:#9aa4b2;font-size:12px">${e.timestamp}</div>
+        <div style="margin-top:4px">${e.transcript}</div>
+        ${forbidden}
+      </div>
+    `;
+  });
+
+  grid.innerHTML = html;
+};
+
+
+document.getElementById('reload').onclick = loadLog;
+
+document.getElementById('snap').onclick = async ()=>{
+  await fetch(API_SNAPSHOT,{method:'POST'});
+  setTimeout(loadLog,1000);
+};
+
+document.getElementById('download').onclick = ()=>{
+  const blob = new Blob([JSON.stringify(entries,null,2)],{type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'cheat_log.json';
+  a.click();
+};
+
+async function pollMetadata(){
+  try{
+    const r = await fetch(API_METADATA);
+    const md = await r.json();
+
+    gazeEl.textContent = md.gaze_status;
+    alertsEl.textContent = md.alerts.join(', ') || '-';
+
+    drawOverlay(md.face_boxes, md.yolo_boxes);
+  }catch{}
+  setTimeout(pollMetadata,600);
+}
+
+function setupSpeech(){
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if(!SR) return;
+
+  recognition = new SR();
+  recognition.lang = 'id-ID';
+  recognition.continuous = true;
+  recognition.interimResults = true;
+
+  recognition.onstart = ()=> listening = true;
+  recognition.onend = ()=> listening = false;
+
+  recognition.onresult = e=>{
+    let final = '';
+    for(let i=0;i<e.results.length;i++){
+      if(e.results[i].isFinal) final += e.results[i][0].transcript + ' ';
+    }
+    if(final.trim()){
+      liveTranscriptEl.textContent = 'Transcript (client): ' + final;
+      fetch(API_SPEECH,{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({text:final})
+      });
+    }
+  };
+
+  setInterval(()=>{
+    if(recognition && !listening){
+      try{ recognition.start(); }catch{}
+    }
+  },1000);
+}
+
+document.getElementById('toggleSystem').onclick = async ()=>{
+  const enable = confirm("Hidupkan sistem? OK = ON, Cancel = OFF");
+  await fetch(API_TOGGLE,{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({value:enable})
+  });
+};
+
+document.getElementById('showFiles').onclick = async ()=>{
+  const r = await fetch(API_LIST);
+  const data = await r.json();
+
+  let html = `<h3>Cheat Images</h3>`;
+  data.cheat_images.forEach(f=>{
+    html += `<img src="/${f}" class="thumb">`;
+  });
+
+  html += `<h3>Forbidden Images</h3>`;
+  data.forbidden_images.forEach(f=>{
+    html += `<img src="/${f}" class="thumb">`;
+  });
+
+  html += `<h3>Forbidden JSON</h3><ul>`;
+  data.forbidden_json.forEach(f=>{
+    html += `<li><a href="/${f}" target="_blank">${f}</a></li>`;
+  });
+  html += `</ul>`;
+
+  grid.innerHTML = html;
+};
+
+loadLog();
+pollMetadata();
+setupSpeech();
+resizeOverlay();
+</script>
+
+</body>
+</html>
