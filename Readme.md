@@ -156,12 +156,8 @@ Feature requests
 Pull requests
 
 
-📄 License
-This project is licensed under the MIT License.
-
-
 👤 Author
-ammad Medan, Indonesia 2025
+zaaidil Medan, Indonesia 2025
 
 
 
