@@ -1,5 +1,7 @@
-flask
-opencv-python
-mediapipe
-ultralytics
-numpy
+work in python 3.8 to 3.11.9
+flask 3.1.2
+opencv-python 4.10.0.84
+mediapipe 0.10.14
+ultralytics 8.1.0
+numpy 1.26.4
+web-speech API
